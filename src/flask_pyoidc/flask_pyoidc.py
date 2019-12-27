@@ -20,10 +20,12 @@ import logging
 import flask
 import importlib_resources
 from flask import current_app
+from flask import request
 from flask.helpers import url_for
 from oic import rndstr
 from oic.oic.message import EndSessionRequest
 from urllib.parse import parse_qsl
+from urllib.parse import urlparse
 from werkzeug.utils import redirect
 
 from .auth_response_handler import AuthResponseProcessError, AuthResponseHandler, AuthResponseErrorResponseError
@@ -67,7 +69,7 @@ class OIDCAuthentication:
         # dynamically add the Flask redirect uri to the client info
         with app.app_context():
             self.clients = {
-                name: PyoidcFacade(configuration, url_for(self._redirect_uri_endpoint))
+                name: PyoidcFacade(configuration, self._redirect_uri_endpoint)
                 for (name, configuration) in self._provider_configurations.items()
             }
 
@@ -95,7 +97,7 @@ class OIDCAuthentication:
             client_registration_args['post_logout_redirect_uris'] = post_logout_redirect_uris
         client.register(client_registration_args)
 
-    def _authenticate(self, client, interactive=True):
+    def _authenticate(self, client, redirect_uri,  interactive=True):
         if not client.is_registered():
             self._register_client(client)
 
@@ -109,9 +111,12 @@ class OIDCAuthentication:
         if not interactive:
             extra_auth_params['prompt'] = 'none'
 
-        login_url = client.authentication_request(flask.session['state'],
-                                                  flask.session['nonce'],
-                                                  extra_auth_params)
+        login_url = client.authentication_request(
+            redirect_uri,
+            flask.session['state'],
+            flask.session['nonce'],
+            extra_auth_params
+        )
 
         auth_params = dict(parse_qsl(login_url.split('?')[1]))
         flask.session['fragment_encoded_response'] = AuthResponseHandler.expect_fragment_encoded_response(auth_params)
@@ -139,8 +144,13 @@ class OIDCAuthentication:
         authn_resp = client.parse_authentication_response(auth_resp)
         logger.debug('received authentication response: %s', authn_resp.to_json())
 
+        request_url_parsed = urlparse(request.base_url)
+        scheme = request_url_parsed.scheme
+        netloc = request_url_parsed.netloc
+        base_url = scheme + '://' + netloc + '/'
+
         try:
-            result = AuthResponseHandler(client).process_auth_response(authn_resp,
+            result = AuthResponseHandler(client, base_url).process_auth_response(authn_resp,
                                                                        flask.session.pop('state'),
                                                                        flask.session.pop('nonce'))
         except AuthResponseErrorResponseError as e:
@@ -194,15 +204,20 @@ class OIDCAuthentication:
                 session = UserSession(flask.session, provider_name)
                 client = self.clients[session.current_provider]
 
+                request_url_parsed = urlparse(request.base_url)
+                scheme = request_url_parsed.scheme
+                netloc = request_url_parsed.netloc
+                redirect_uri = scheme + '://' + netloc + '/' + self._redirect_uri_endpoint
+                print(redirect_uri)
                 if session.should_refresh(client.session_refresh_interval_seconds):
                     logger.debug('user auth will be refreshed "silently"')
-                    return self._authenticate(client, interactive=False)
+                    return self._authenticate(client, redirect_uri, interactive=False)
                 elif session.is_authenticated():
                     logger.debug('user is already authenticated')
                     return view_func(*args, **kwargs)
                 else:
                     logger.debug('user not authenticated, start flow')
-                    return self._authenticate(client)
+                    return self._authenticate(client, redirect_uri)
 
             return wrapper
 
