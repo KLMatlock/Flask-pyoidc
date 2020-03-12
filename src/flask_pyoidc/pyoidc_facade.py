@@ -6,6 +6,7 @@ from oic.oic import Client, RegistrationResponse, AuthorizationResponse, \
     AccessTokenResponse, TokenErrorResponse, AuthorizationErrorResponse
 from oic.oic.message import ProviderConfigurationResponse
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
+from flask import url_for
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class PyoidcFacade:
     Wrapper around pyoidc library, coupled with config for a simplified API for flask-pyoidc.
     """
 
-    def __init__(self, provider_configuration, redirect_uri_endpoint):
+    def __init__(self, provider_configuration, redirect_uri):
         """
         Args:
             provider_configuration (flask_pyoidc.provider_configuration.ProviderConfiguration)
@@ -60,17 +61,17 @@ class PyoidcFacade:
             registration_response = RegistrationResponse(**client_metadata)
             self._client.store_registration_info(registration_response)
 
-        self._redirect_uri_endpoint = redirect_uri_endpoint
+        self._redirect_uri = redirect_uri
 
     def is_registered(self):
         return bool(self._provider_configuration.registered_client_metadata)
 
     def register(self, extra_registration_params=None):
-        client_metadata = self._provider_configuration.register_client([self._redirect_uri_endpoint], extra_registration_params)
+        client_metadata = self._provider_configuration.register_client([self._redirect_uri], extra_registration_params)
         logger.debug('client registration response: %s', client_metadata)
         self._client.store_registration_info(RegistrationResponse(**client_metadata.to_dict()))
 
-    def authentication_request(self, redirect_uri, state, nonce, extra_auth_params):
+    def authentication_request(self, state, nonce, redirect_uri, extra_auth_params):
         """
 
         :param state:
@@ -107,14 +108,13 @@ class PyoidcFacade:
             auth_resp['id_token_jwt'] = response_params['id_token']
         return auth_resp
 
-    def token_request(self, authorization_code, base_url):
+    def token_request(self, authorization_code):
         """
         Makes a token request.  If the 'token_endpoint' is not configured in the provider metadata, no request will
         be made.
 
         Args:
             authorization_code (str): authorization code issued to client after user authorization
-            base_url (str): Base url (scheme + netloc) of client
 
         Returns:
             Union[AccessTokenResponse, TokenErrorResponse, None]: The parsed token response, or None if no token
@@ -123,10 +123,12 @@ class PyoidcFacade:
         if not self._client.token_endpoint:
             return None
 
+        redirect_uri = url_for(self._redirect_uri, _external=True)
+
         request = {
             'grant_type': 'authorization_code',
             'code': authorization_code,
-            'redirect_uri': base_url + self._redirect_uri_endpoint
+            'redirect_uri': redirect_uri
         }
 
         logger.debug('making token request: %s', request)

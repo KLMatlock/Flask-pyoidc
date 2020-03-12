@@ -95,7 +95,8 @@ class ProviderConfiguration:
                  client_metadata=None,
                  auth_request_params=None,
                  session_refresh_interval_seconds=None,
-                 requests_session=None):
+                 requests_session=None,
+                 redirect_uri = None):
         """
         Args:
             issuer (str): OP Issuer Identifier. If this is specified discovery will be used to fetch the provider
@@ -112,6 +113,9 @@ class ProviderConfiguration:
                 refreshes.
             requests_session (requests.Session): custom requests object to allow for example retry handling, etc.
         """
+
+        if redirect_uri is None:
+            self._redirect_uri = issuer
 
         if not issuer and not provider_metadata:
             raise ValueError("Specify either 'issuer' or 'provider_metadata'.")
@@ -136,6 +140,7 @@ class ProviderConfiguration:
             resp = self.requests_session \
                 .get(self._issuer + '/.well-known/openid-configuration',
                      timeout=self.DEFAULT_REQUEST_TIMEOUT)
+            resp.raise_for_status()
             logger.debug('Received discovery response: ' + resp.text)
 
             self._provider_metadata = ProviderMetadata(**resp.json())
